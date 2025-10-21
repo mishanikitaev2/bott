@@ -1,14 +1,16 @@
-name: Run Bot Periodically
+name: Run Bot 24/7
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'  # Каждые 6 часов
-  workflow_dispatch:
+  workflow_dispatch:  # Ручной запуск
+  push:
+    branches: [ main, master ]
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    
+    # САМОЕ ВАЖНОЕ - предотвращаем завершение
+    timeout-minutes: 43200  # 30 дней максимум (максимум GitHub)
     
     steps:
     - name: 📥 Checkout code
@@ -22,17 +24,45 @@ jobs:
     - name: 📦 Install dependencies
       run: |
         pip install -r requirements.txt
+        # Если requirements.txt нет:
+        pip install python-telegram-bot python-docx python-dotenv
 
-    - name: 🔧 Setup environment
+    - name: 🔧 Create .env file
       run: |
         echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
         echo "ADMINS=${{ secrets.ADMINS }}" >> .env
+        echo "✅ .env file created with secrets"
 
-    - name: 🚀 Run bot
+    - name: 🔍 Check templates
       run: |
-        echo "🤖 Starting bot..."
-        python bot.py &
-        BOT_PID=$!
-        sleep 30
-        kill $BOT_PID
-        echo "✅ Bot test completed"
+        echo "📁 Checking templates directory..."
+        ls -la templates/ || echo "⚠️  Templates directory might be missing"
+        find . -name "*.docx" | head -5
+
+    - name: 🚀 RUN BOT 24/7
+      run: |
+        echo "🤖 Starting Telegram Bot..."
+        echo "⏰ Bot will run until manually stopped (max 30 days)"
+        echo "📝 Logs will be displayed below:"
+        echo "================================================"
+        
+        # Запускаем бота с автоматическим рестартом при ошибках
+        while true; do
+          echo "$(date): Starting bot..."
+          python full_bot.py || {
+            echo "❌ Bot crashed, restarting in 5 seconds..."
+            sleep 5
+            continue
+          }
+          echo "✅ Bot stopped gracefully"
+          break
+        done
+
+    - name: 📊 Bot stopped notification
+      if: always()
+      run: |
+        echo "🛑 Bot process stopped"
+        echo "This could be due to:"
+        echo "1. Manual workflow cancellation"
+        echo "2. 30-day time limit reached"
+        echo "3. Critical error"
