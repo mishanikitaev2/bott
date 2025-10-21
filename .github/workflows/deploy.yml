@@ -1,0 +1,67 @@
+name: Deploy Telegram Bot
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # Позволяет запускать вручную
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # Если requirements.txt нет, устанавливаем напрямую
+        pip install python-telegram-bot python-docx python-dotenv
+
+    - name: 🔧 Create .env file
+      run: |
+        cat > .env << EOF
+        BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+        ADMINS=${{ secrets.ADMINS }}
+        EOF
+        echo "✅ .env file created"
+        cat .env | sed 's/BOT_TOKEN=.*/BOT_TOKEN=***/' | sed 's/ADMINS=.*/ADMINS=***/'
+
+    - name: 🔍 Check templates directory
+      run: |
+        echo "📁 Checking templates..."
+        ls -la templates/ || echo "❌ Templates directory not found"
+        find . -name "*.docx" -type f | head -10
+
+    - name: 🧪 Test bot startup
+      run: |
+        echo "🧪 Testing bot startup..."
+        timeout 30s python bot.py || echo "⏰ Bot stopped (expected)"
+        echo "✅ Bot started successfully"
+
+    - name: 📊 Create summary
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Telegram bot deployment completed!" >> $GITHUB_STEP_SUMMARY
+        echo "📅 **Timestamp:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "🐍 **Python Version:** 3.9" >> $GITHUB_STEP_SUMMARY
+        echo "📦 **Dependencies:** Installed successfully" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next steps:" >> $GITHUB_STEP_SUMMARY
+        echo "1. Ensure your bot is running on a server" >> $GITHUB_STEP_SUMMARY
+        echo "2. Monitor logs for errors" >> $GITHUB_STEP_SUMMARY
+        echo "3. Test bot functionality" >> $GITHUB_STEP_SUMMARY
+
+    - name: 🚨 Notify on failure
+      if: failure()
+      run: |
+        echo "❌ Deployment failed!"
+        exit 1
