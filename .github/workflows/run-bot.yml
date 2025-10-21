@@ -1,0 +1,38 @@
+name: Run Bot Periodically
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Каждые 6 часов
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 📦 Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: 🔧 Setup environment
+      run: |
+        echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
+        echo "ADMINS=${{ secrets.ADMINS }}" >> .env
+
+    - name: 🚀 Run bot
+      run: |
+        echo "🤖 Starting bot..."
+        python bot.py &
+        BOT_PID=$!
+        sleep 30
+        kill $BOT_PID
+        echo "✅ Bot test completed"
