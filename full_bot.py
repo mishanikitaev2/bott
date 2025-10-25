@@ -146,6 +146,20 @@ def get_required_fields(selected_templates, category):
     print(f"📋 Порядок полей: {final_fields}")
     return final_fields
 
+def get_user_input_fields(required_fields):
+    """Возвращает только те поля, которые действительно нужно спрашивать у пользователя"""
+    # Поля, которые заполняются автоматически
+    AUTO_FILLED_FIELDS = ["sop_diagnosis", "main_diagnosis"]
+    
+    user_fields = []
+    for field in required_fields:
+        if field not in AUTO_FILLED_FIELDS:
+            user_fields.append(field)
+    
+    print(f"🎯 Поля для ввода пользователем: {len(user_fields)} из {len(required_fields)}")
+    print(f"🎯 Список: {user_fields}")
+    return user_fields
+
 async def start(update: Update, context: CallbackContext):
     """Начало работы с ботом"""
     user_id = update.effective_user.id
@@ -308,8 +322,12 @@ async def handle_template_selection(update: Update, context: CallbackContext):
             )
             return ConversationHandler.END
         
-        # Сохраняем список полей для заполнения
-        context.user_data['required_fields'] = required_fields
+        # Получаем только те поля, которые действительно нужно спрашивать у пользователя
+        user_input_fields = get_user_input_fields(required_fields)
+        
+        # Сохраняем оба списка
+        context.user_data['required_fields'] = required_fields  # Все поля для документов
+        context.user_data['user_input_fields'] = user_input_fields  # Только для вопросов
         context.user_data['current_field_index'] = 0
         context.user_data['field_history'] = []  # История заполненных полей для отмены
         
@@ -379,19 +397,19 @@ async def start_from_query(query, context):
     return SELECTING_CATEGORY
 
 async def ask_next_question(context: CallbackContext, chat_id: int):
-    """Задаем следующий вопрос в ПОРЯДКЕ ИЗ ДОКУМЕНТОВ"""
+    """Задаем следующий вопрос - ИСПРАВЛЕНО: используем только user_input_fields"""
     field_index = context.user_data['current_field_index']
-    required_fields = context.user_data['required_fields']
+    user_input_fields = context.user_data['user_input_fields']
     
     # ВАЖНОЕ ИСПРАВЛЕНИЕ: проверяем границы массива
-    if field_index >= len(required_fields):
+    if field_index >= len(user_input_fields):
         print("✅ Все поля заполнены, переходим к генерации документов")
         await generate_documents(context, chat_id)
         return ConversationHandler.END
     
-    print(f"📝 Заполняем поле {field_index + 1}/{len(required_fields)}: {required_fields[field_index]}")
+    print(f"📝 Заполняем поле {field_index + 1}/{len(user_input_fields)}: {user_input_fields[field_index]}")
     
-    field_name = required_fields[field_index]
+    field_name = user_input_fields[field_index]
     
     # Названия полей как в документах
     field_display_names = {
@@ -407,8 +425,6 @@ async def ask_next_question(context: CallbackContext, chat_id: int):
         
         # Диагнозы
         "diagnosis": "🏥 Установлен клинический диагноз",
-        "main_diagnosis": "🔍 Основной диагноз", 
-        "sop_diagnosis": "📋 Сопутствующий диагноз",
         "diagnosis_code": "🔢 Код по МКБ-10",
         
         # Медицинская информация
@@ -441,7 +457,7 @@ async def ask_next_question(context: CallbackContext, chat_id: int):
     question = field_display_names.get(field_name, f"📝 {field_name}")
     
     # Добавляем прогресс-бар
-    progress = f"({field_index + 1}/{len(required_fields)})"
+    progress = f"({field_index + 1}/{len(user_input_fields)})"
     
     # Добавляем кнопки навигации с возможностью отмены предыдущего шага
     keyboard = []
@@ -460,14 +476,22 @@ async def ask_next_question(context: CallbackContext, chat_id: int):
     )
 
 async def handle_user_input(update: Update, context: CallbackContext):
-    """Обработка ввода пользователя"""
+    """Обработка ввода пользователя - ИЗМЕНЕНО: все диагнозы = клинический диагноз"""
     user_input = update.message.text
     field_index = context.user_data['current_field_index']
-    required_fields = context.user_data['required_fields']
+    user_input_fields = context.user_data['user_input_fields']
     
     # Сохраняем данные
-    field_name = required_fields[field_index]
+    field_name = user_input_fields[field_index]
     context.user_data[field_name] = user_input
+    
+    # НОВАЯ ЛОГИКА: если заполняем "diagnosis" (клинический диагноз), 
+    # то автоматически заполняем ВСЕ связанные диагнозы тем же значением
+    if field_name == "diagnosis":
+        # Автоматически заполняем все связанные поля диагнозов
+        context.user_data["sop_diagnosis"] = user_input  # сопутствующий
+        context.user_data["main_diagnosis"] = user_input  # основной
+        print(f"💡 Автоматически заполнены все диагнозы: {user_input}")
     
     # Сохраняем в историю для возможности отмены
     if 'field_history' not in context.user_data:
@@ -634,11 +658,18 @@ async def generate_documents(context: CallbackContext, chat_id: int):
         await context.bot.send_message(chat_id, "❌ Ошибка: не выбраны шаблоны или категория")
         return ConversationHandler.END
     
-    # Собираем все данные (исключая автоматические поля)
+    # Собираем все данные для документов
     data = {}
     required_fields = user_data.get('required_fields', [])
     for field in required_fields:
         data[field] = user_data.get(field, "Не указано")
+    
+    # НОВАЯ ЛОГИКА: убедимся что ВСЕ диагнозы совпадают с клиническим
+    if "diagnosis" in data:
+        # Автоматически заполняем все связанные диагнозы
+        data["sop_diagnosis"] = data["diagnosis"]  # сопутствующий
+        data["main_diagnosis"] = data["diagnosis"]  # основной
+        print(f"💡 Все диагнозы установлены равными клиническому: {data['diagnosis']}")
     
     print(f"🎯 Генерируем документы для {category}: {selected_templates}")
     
